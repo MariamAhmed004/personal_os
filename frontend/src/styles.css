@@ -1,0 +1,21 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color-scheme: dark;
+  background: #111827;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(ellipse at 80% -20%, rgba(59, 130, 246, 0.12), transparent 40rem),
+    #111827;
+}
+
+.app-navbar { background: rgba(17, 24, 39, 0.9); }
+.page-title { letter-spacing: -0.04em; }
+.surface-card { height: 100%; border-color: rgba(148, 163, 184, 0.14); background: rgba(30, 41, 59, 0.75); }
+.muted-label { color: #94a3b8; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.auth-panel { width: min(100% - 2rem, 440px); margin: 10vh auto; }
+.nav-link.active { color: #fff !important; }

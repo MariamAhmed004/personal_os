@@ -1,0 +1,87 @@
+PERSONAL OS — PROJECT GUIDE
+==========================
+
+PURPOSE
+-------
+Personal OS is a manual-first personal planning and life-management application.
+The Daily Sheet is the central day-level workspace. Habits, calendar events,
+backlog items, mood entries, and reflections supply structured information that
+can help a person plan and review their days. AI is a future enhancement, never a
+requirement for using the planner.
+
+ARCHITECTURAL PHILOSOPHY
+------------------------
+The backend and frontend are organized by product feature rather than by
+technical layer at the project root. Each feature owns its routes, schemas,
+models, and later its business services/repository where useful. Cross-cutting
+concerns such as configuration, authentication, database setup, and reusable
+primitives live in dedicated shared areas.
+
+The database is the source of truth for structured facts. Use typed values
+(dates, times, booleans, enumerations, and numeric weekday indexes) rather than
+encoded human-readable phrases. The UI is responsible for formatting those
+values for people.
+
+The Daily Sheet is the core planning surface, but source records remain
+independently manageable. AI does not write to the database in this scaffold.
+Future suggestions must remain pending until the user approves them. The
+application must retain full manual functionality if no model is configured.
+
+FOLDER STRUCTURE
+----------------
+backend/app/features/   Feature modules: auth, habits, calendar, backlog,
+                        daily_sheet, mood, reflections, suggestions, ai.
+backend/app/core/       Settings, security, shared application concerns.
+backend/app/database/   SQLAlchemy engine, session and base metadata.
+backend/app/shared/     Reusable backend primitives.
+frontend/src/features/  Feature pages, components, and API clients.
+frontend/src/app/       Router, application shell, and global layout.
+frontend/src/shared/    Shared API transport, components, and types.
+docker-compose.yml      Local PostgreSQL, API and frontend development stack.
+
+TECHNOLOGY
+----------
+Frontend: React, TypeScript, Vite, React Router, React Bootstrap, Framer Motion.
+Backend: Python and FastAPI.
+Database: PostgreSQL with SQLAlchemy.
+Containers: Docker and Docker Compose.
+Future AI: Ollama / open-source models (not configured or called yet).
+
+LOCAL START
+-----------
+1. Copy .env.example to .env and replace SECRET_KEY with a private random value.
+2. Run: docker compose up --build
+3. Frontend: http://localhost:5173
+4. API documentation: http://localhost:8000/docs
+
+To run without Docker, install backend/requirements.txt in a Python virtual
+environment and run "uvicorn app.main:app --reload" from backend. Install the
+frontend dependencies with "npm install", then run "npm run dev" from frontend.
+The local backend requires a PostgreSQL database and DATABASE_URL.
+
+DATA AND API NOTES
+------------------
+API routes use the /api/v1 prefix. Personal records are scoped to the signed-in
+user. JWT access tokens are used for API authorization. This scaffold creates
+database tables at API startup to simplify learning and local setup. Replace
+that behavior with Alembic migrations before production use.
+
+Weekday indexes are 0=Monday through 6=Sunday. Event timestamps are
+timezone-aware. Daily Sheets can contain structured sections; clients should
+hide sections that have no content. Editing a past sheet should be visibly
+identified as "Edited Later" in the UI.
+
+AI EXTENSION POINTS
+-------------------
+backend/app/features/ai/ contains interface-level placeholders for AIService,
+PromptBuilder, PlanningService, ChatService, and SuggestionService. They do not
+connect to Ollama, construct advanced prompts, run agents, or generate content.
+Add model integrations only behind explicit adapters and preserve user
+confirmation before applying proposed changes.
+
+DEVELOPMENT
+-----------
+Keep feature behavior with its feature. Put truly cross-cutting behavior in
+core/shared, not in a new root-level controllers/services/repositories tree.
+Add schema migrations and tests as the project grows. Avoid committing .env or
+credentials. See ARCHITECTURE.md for the system overview and initial API map.
