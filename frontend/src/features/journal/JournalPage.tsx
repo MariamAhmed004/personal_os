@@ -3,6 +3,7 @@ import { Alert, Badge, Button, Card, Col, Form, ListGroup, Row } from "react-boo
 import { Link } from "react-router-dom";
 import { api } from "../../shared/api";
 import type { DailySheet, MoodEntry, Reflection } from "../../shared/types";
+import { Icon } from "../../shared/Icon";
 
 function localDate() {
   const now = new Date();
@@ -13,9 +14,6 @@ export function JournalPage() {
   const [sheets, setSheets] = useState<DailySheet[]>([]);
   const [moods, setMoods] = useState<MoodEntry[]>([]);
   const [reflections, setReflections] = useState<Reflection[]>([]);
-  const [mood, setMood] = useState("good");
-  const [moodPeriod, setMoodPeriod] = useState<"morning" | "evening">("evening");
-  const [moodNote, setMoodNote] = useState("");
   const [reflectionContent, setReflectionContent] = useState("");
   const [reflectionPeriod, setReflectionPeriod] = useState<"weekly" | "monthly">("weekly");
   const [periodStart, setPeriodStart] = useState(localDate());
@@ -38,19 +36,6 @@ export function JournalPage() {
     }
   }
   useEffect(() => { void refresh(); }, []);
-
-  async function createMood(event: FormEvent) {
-    event.preventDefault();
-    setError("");
-    try {
-      await api("/moods", {
-        method: "POST",
-        body: JSON.stringify({ entry_date: localDate(), period: moodPeriod, mood, note: moodNote || null }),
-      });
-      setMoodNote("");
-      await refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save mood."); }
-  }
 
   async function deleteMood(id: string) {
     try {
@@ -89,26 +74,26 @@ export function JournalPage() {
 
   return (
     <>
-      <div className="mb-4"><p className="muted-label mb-2">Look back with kindness</p><h1 className="page-title fw-bold">Journal</h1><p className="text-secondary">Past Daily Sheets and reflections, all in one place.</p></div>
+      <div className="page-heading"><p className="eyebrow mb-2">Look back with kindness</p><h1 className="page-title"><Icon name="journal" className="heading-icon" />Your journal</h1><p className="page-subtitle">A quiet place for the moments, thoughts, and feelings you want to keep.</p></div>
       {error && <Alert variant="danger">{error}</Alert>}
       <Row className="g-3 mb-4">
         <Col lg={5}>
-          <Card className="surface-card h-100"><Card.Body className="p-4">
-            <h2 className="h5">Mood check-in</h2>
-            <Form onSubmit={createMood} className="row g-2">
-              <Form.Group className="col-sm-6"><Form.Label>Time of day</Form.Label><Form.Select value={moodPeriod} onChange={(e) => setMoodPeriod(e.target.value as "morning" | "evening")}><option value="morning">Morning</option><option value="evening">Evening</option></Form.Select></Form.Group>
-              <Form.Group className="col-sm-6"><Form.Label>Mood</Form.Label><Form.Select value={mood} onChange={(e) => setMood(e.target.value)}><option value="great">Great</option><option value="good">Good</option><option value="okay">Okay</option><option value="low">Low</option></Form.Select></Form.Group>
-              <Form.Group className="col-12"><Form.Label>Optional note</Form.Label><Form.Control value={moodNote} onChange={(e) => setMoodNote(e.target.value)} maxLength={2000} /></Form.Group>
-              <div className="col-12"><Button type="submit">Save mood</Button></div>
-            </Form>
-            <ListGroup variant="flush" className="mt-3">{moods.filter((entry) => entry.entry_date === localDate()).map((entry) => (
-              <ListGroup.Item key={entry.id} className="bg-transparent d-flex justify-content-between px-0"><span className="text-capitalize">{entry.period}: {entry.mood}</span><Button size="sm" variant="outline-secondary" onClick={() => void deleteMood(entry.id)}>Remove</Button></ListGroup.Item>
+          <Card className="surface-card accent-rose h-100"><Card.Body>
+            <p className="eyebrow">Mood moments</p>
+            <p className="small text-secondary">Check in on today’s Daily Sheet. Your past moments stay here.</p>
+            <ListGroup variant="flush">{moods.slice(0, 6).map((entry) => (
+              <ListGroup.Item key={entry.id} className="bg-transparent d-flex justify-content-between align-items-center gap-2 px-0">
+                <span><span className="me-2" aria-hidden="true">{({ great: "😀", good: "🙂", okay: "😐", low: "😔" } as Record<string, string>)[entry.mood] ?? "🙂"}</span><span className="text-capitalize">{entry.mood}</span><span className="text-secondary small"> · {entry.entry_date} · {entry.period}</span>{entry.note && <div className="small text-secondary">{entry.note}</div>}</span>
+                <Button size="sm" variant="outline-danger" onClick={() => void deleteMood(entry.id)}>Remove</Button>
+              </ListGroup.Item>
             ))}</ListGroup>
+            {moods.length === 0 && <p className="text-secondary mb-0">Your check-ins will gather here over time.</p>}
+            <Link className="d-inline-block mt-3" to="/daily-sheet">Check in for today →</Link>
           </Card.Body></Card>
         </Col>
         <Col lg={7}>
-          <Card className="surface-card h-100"><Card.Body className="p-4">
-            <h2 className="h5">Reflection</h2>
+          <Card className="surface-card accent-purple h-100"><Card.Body>
+            <p className="eyebrow">Reflection</p>
             <Form onSubmit={createReflection} className="row g-2">
               <Form.Group className="col-sm-4"><Form.Label>Period</Form.Label><Form.Select value={reflectionPeriod} onChange={(e) => setReflectionPeriod(e.target.value as "weekly" | "monthly")}><option value="weekly">Weekly</option><option value="monthly">Monthly</option></Form.Select></Form.Group>
               <Form.Group className="col-sm-4"><Form.Label>Period starts</Form.Label><Form.Control type="date" required value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} /></Form.Group>

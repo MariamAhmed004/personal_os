@@ -1,13 +1,25 @@
-import { Card, Form } from "react-bootstrap";
+import { Button, Card } from "react-bootstrap";
+import { Icon } from "../../shared/Icon";
+import { useTheme } from "../../app/ThemeContext";
 
 export function SettingsPage() {
+  const { theme, toggleTheme } = useTheme();
+
   return (
     <>
-      <div className="mb-4"><p className="muted-label mb-2">Make it yours</p><h1 className="page-title fw-bold">Settings</h1></div>
-      <Card className="surface-card"><Card.Body className="p-4">
-        <h2 className="h5">Appearance</h2>
-        <Form.Check type="switch" id="dark-mode" label="Dark mode (default)" checked disabled />
-        <p className="small text-secondary mt-2 mb-0">Theme preferences will become configurable in a future update.</p>
+      <div className="page-heading"><p className="eyebrow mb-2">Make it yours</p><h1 className="page-title"><Icon name="settings" className="heading-icon" />Settings</h1><p className="page-subtitle">A few quiet details about your personal space.</p></div>
+      <Card className="surface-card accent-green"><Card.Body>
+        <p className="eyebrow">Your space</p>
+        <div className="d-flex align-items-center justify-content-between flex-wrap gap-3">
+          <div>
+            <h2 className="h5">Personal OS {theme === "dark" ? "Dark" : "Light"}</h2>
+            <p className="text-secondary mb-0">Choose the look that feels right for your planning space.</p>
+          </div>
+          <Button variant="outline-primary" onClick={toggleTheme}>
+            <Icon name={theme === "dark" ? "sun" : "moon"} className="button-icon" />
+            Switch to {theme === "dark" ? "light" : "dark"} mode
+          </Button>
+        </div>
       </Card.Body></Card>
     </>
   );

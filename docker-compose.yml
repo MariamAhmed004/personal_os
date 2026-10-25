@@ -21,6 +21,9 @@ services:
       - .env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://personal_os:personal123@db:5432/personal_os}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     depends_on:
@@ -33,6 +36,7 @@ services:
       dockerfile: Dockerfile.dev
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
+      CHOKIDAR_USEPOLLING: "true"
     ports:
       - "5173:5173"
     volumes:

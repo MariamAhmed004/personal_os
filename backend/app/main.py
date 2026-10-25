@@ -10,6 +10,7 @@ from app.features.auth import models as auth_models
 from app.features.auth.routes import router as auth_router, users_router
 from app.features.backlog import models as backlog_models
 from app.features.backlog.routes import router as backlog_router
+from app.features.ai.routes import router as ai_router
 from app.features.calendar import models as calendar_models
 from app.features.calendar.routes import router as calendar_router
 from app.features.chat import models as chat_models
@@ -47,6 +48,7 @@ def health_check():
 for router in (
     auth_router,
     users_router,
+    ai_router,
     habits_router,
     calendar_router,
     backlog_router,

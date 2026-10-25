@@ -11,6 +11,7 @@ class Settings(BaseSettings):
         min_length=32,
     )
     access_token_expire_minutes: int = 30
+    ollama_url: str = "http://host.docker.internal:11434"
     cors_origins: list[str] = ["http://localhost:5173"]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
