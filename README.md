@@ -1,73 +1,264 @@
 # Personal OS
 
-A personal planning and life-management application centered on the Daily Sheet, with a local Ollama assistant available from Home.
+Personal OS is a planning and reflection app centered on a Daily Sheet. It includes habits, a calendar, a backlog, mood check-ins, a journal, and an optional AI assistant.
 
-## Quick start
+There are two ways to run the frontend:
 
-1. Copy `.env.example` to `.env` and change `SECRET_KEY`.
-2. Run `docker compose up --build`.
-3. Open the frontend at <http://localhost:5173> and the API docs at <http://localhost:8000/docs>.
+| Mode | What it uses | Data and login |
+| --- | --- | --- |
+| Full application | React frontend, FastAPI API, PostgreSQL, optional Ollama | Sign in or register; data is stored in PostgreSQL for that account |
+| GitHub Pages demo | Same React frontend, demo fixtures and an in-memory adapter | No account or backend; edits are temporary and reset on refresh |
 
-Compose starts PostgreSQL, Ollama, the FastAPI API, and the Vite development server. Frontend dependencies are synchronized into the persistent `node_modules` volume at startup, so newly added packages are available even when that volume already exists. File watching uses polling so Vite detects changes through Docker bind mounts on Windows and reloads the page. The API creates its tables on startup for this initial scaffold. Use Alembic migrations before treating the database as production-ready.
+## Contents
 
-For local debugging, Docker Compose enables `AI_DEBUG_RESPONSES` by default. When an assistant reply fails validation, the raw Ollama response is appended to the chat error shown in the Home assistant. The setting defaults to `false` outside Compose; keep it disabled in shared or production environments because model replies may contain personal data.
+- [Requirements](#requirements)
+- [Run the full application with Docker Compose](#run-the-full-application-with-docker-compose)
+- [Use the local AI assistant](#use-the-local-ai-assistant)
+- [Use the GitHub Pages demo](#use-the-github-pages-demo)
+- [Run the backend and frontend separately](#run-the-backend-and-frontend-separately)
+- [Demo account and database seed data](#demo-account-and-database-seed-data)
+- [Common tasks](#common-tasks)
+- [Troubleshooting](#troubleshooting)
+- [Project structure](#project-structure)
+- [Known limitations](#known-limitations)
 
-## Local AI assistant
+## Requirements
 
-The Compose setup runs Ollama in its own container and points the API at `http://ollama:11434`. Download the configured Qwen3 14B model once after starting Compose:
+### Docker Compose (recommended for the full application)
+
+- Windows, macOS, or Linux
+- Docker Desktop or Docker Engine with the Docker Compose plugin
+- An internet connection for the first image builds and, if you want AI, the model download
+- Enough disk space and memory for the PostgreSQL and Ollama containers. Qwen3 14B is a large model; see [Use the local AI assistant](#use-the-local-ai-assistant).
+
+### GitHub Pages demo or frontend-only development
+
+- Node.js 22 (the Pages workflow uses Node.js 22)
+- npm, included with Node.js
+
+The GitHub Pages demo runs without FastAPI, PostgreSQL, Ollama, Docker, credentials, or API keys.
+
+## Run the full application with Docker Compose
+
+These steps run the authenticated application with PostgreSQL and the API. The AI assistant becomes available after Ollama has the configured model.
+
+1. Clone the repository and enter its folder:
+
+   ```powershell
+   git clone https://github.com/MariamAhmed004/personal_os.git
+   Set-Location personal_os
+   ```
+
+2. Create your local environment file:
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+3. Open `.env` and replace `SECRET_KEY` with a private random value of at least 32 characters. Keep `.env` on your machine; never commit it or put its values in a frontend build. The other example values are suitable for local development.
+
+4. Build and start the services:
+
+   ```powershell
+   docker compose up --build -d
+   ```
+
+5. Open:
+
+   - Web app: <http://localhost:5173>
+   - API documentation: <http://localhost:8000/docs>
+   - API health check: <http://localhost:8000/health>
+
+6. Select **Create an account** in the web app, register, and sign in. The application creates its initial database tables at API startup. For first-time local development, this project does not currently require a separate migration command.
+
+The Compose stack contains `web`, `api`, `db` (PostgreSQL), and `ollama`. PostgreSQL data, frontend `node_modules`, and downloaded Ollama model files are held in Docker volumes. The frontend container runs Vite in development mode and uses `http://localhost:8000/api/v1` to reach the API from your browser. The Compose configuration does not enable the frontend demo mode.
+
+### Stop and restart
+
+Stop the containers but keep database data and downloaded models:
 
 ```powershell
-docker compose up --build -d
+docker compose down
+```
+
+Start them again:
+
+```powershell
+docker compose up -d
+```
+
+To follow service logs:
+
+```powershell
+docker compose logs -f web api db ollama
+```
+
+`docker compose down -v` also deletes the named volumes, including PostgreSQL data and the Ollama model cache. Use it only when you intentionally want to remove those local files.
+
+## Use the local AI assistant
+
+The API sends chat requests to the Ollama service configured by `OLLAMA_URL`. In Docker Compose, that address is `http://ollama:11434`. Download the configured model once:
+
+```powershell
 docker compose exec ollama ollama pull qwen3:14b
 ```
 
-The download is about 9.3 GB and may take several minutes to over an hour depending on your internet speed (roughly 13 minutes at 100 Mbps or 50 minutes at 25 Mbps, before overhead). The `ollama_data` Docker volume persists downloaded model files across container restarts and rebuilds, so this is normally a one-time download. Removing that volume will remove the model cache.
+The model download is approximately 9.3 GB and may take a while. Keep at least 10 GB of free disk space for the model; 16 GB or more of system memory is preferable. A GPU with around 12 GB or more of VRAM is recommended for responsive generation. CPU-only generation may be slow. Actual memory use depends on quantization, context length, and other running applications.
 
-Qwen3 14B is a large model: allow at least 10 GB of free disk space for the model and preferably 16 GB or more of system memory. A GPU with around 12 GB or more of VRAM is recommended for responsive generation; CPU-only systems can run it but responses may be slow. Actual memory use depends on quantization, context length, and other running applications.
+After the download completes, open **Home** and use the assistant. Chat history is associated with the signed-in user. The assistant can propose a supported calendar or backlog action, but it does not change application data until you explicitly approve the proposal.
 
-For a demo, register or sign in at <http://localhost:5173>, then open the Home assistant. Chat history and approval decisions are saved per user in the existing `chat_messages` table; proposed actions change personal data only after explicit approval. If you override `OLLAMA_URL` in `.env` while using Compose, set it to `http://ollama:11434` so the API container can reach the Ollama service. For local (non-Docker) backend development, run Ollama on the host and use `OLLAMA_URL=http://localhost:11434`.
-
-The chat endpoints `GET /api/v1/ai/chat/history`, `POST /api/v1/ai/chat`, and `POST /api/v1/ai/chat/{message_id}/decision` require the existing bearer token. The assistant receives the user's habits, upcoming events, open backlog items, display name, and current appearance/time-zone preferences as context.
-
-## GitHub Pages demo
-
-The public demo is a separate Vite build configuration of the same frontend. It uses typed sample fixtures and an in-memory API adapter, so edits work during navigation but reset on refresh. It does not use authentication, send requests to the backend, or persist demo content. The AI assistant is intentionally unavailable in this build. Docker Compose does not set `VITE_DEMO_MODE`, so it continues to use the real API, authentication, and AI integration.
-
-To run the demo locally from PowerShell:
+If Ollama is unavailable or the model is missing:
 
 ```powershell
-cd frontend
+docker compose ps
+docker compose logs ollama api
+docker compose exec ollama ollama pull qwen3:14b
+```
+
+Wait for the pull to finish, then try the assistant again. The assistant is optional: the rest of the full application can be used without a downloaded model.
+
+For local backend development outside Docker, run Ollama on the host and configure `OLLAMA_URL=http://localhost:11434` for the backend process. Inside the API container, use the Compose service address (`http://ollama:11434`), not `localhost`.
+
+> **Local debugging note:** Compose enables `AI_DEBUG_RESPONSES` by default so invalid model responses can be inspected during development. Do not enable raw model-response debugging in a shared or production environment; responses may contain personal data.
+
+## Use the GitHub Pages demo
+
+The Pages build reuses the actual frontend components and routes, but explicitly enables `VITE_DEMO_MODE=true`. It provides sample content for the dashboard, calendar, habits, backlog, Daily Sheets, moods, and journal. Existing controls make temporary changes in memory while you navigate; refreshing resets them.
+
+The demo:
+
+- Opens without account creation, sign-in, a real user, or an access token. A direct visit to `/login` offers an **Explore demo without signing in** button.
+- Uses the same frontend API call sites through a local in-memory adapter. Demo create, edit, delete, completion, and Daily Sheet changes do not call the backend.
+- Does not store demo records in local storage, session storage, cookies, or a remote service. The theme preference alone uses session storage.
+- Shows a banner with an information dialog and the repository link.
+- Marks the AI assistant unavailable. Demo chat messages are not sent to Ollama or saved.
+- Uses hash-based URLs such as `/#/calendar` so direct navigation and browser refresh work on GitHub Pages.
+
+### Try the demo locally
+
+From the repository folder in PowerShell:
+
+```powershell
+Set-Location frontend
 $env:VITE_DEMO_MODE = 'true'
 $env:VITE_PAGES_BASE = '/'
+npm ci
 npm run dev
 ```
 
-For a demo production build, use the same environment variables and run `npm run build`; the output is `frontend/dist`. Remove the variables or open a new PowerShell session to return to the normal build configuration.
+Open <http://localhost:5173>. Visit <http://localhost:5173/#/login> to see the demo’s sign-in bypass page. Press `Ctrl+C` to stop Vite.
 
-The `.github/workflows/deploy-pages.yml` workflow builds the demo on pushes to `main` and on manual runs, using a base path derived from the repository name, and deploys only `frontend/dist` to GitHub Pages. Enable GitHub Pages in the repository settings with **GitHub Actions** as the build and deployment source. The expected project-site URL is `https://MariamAhmed004.github.io/personal_os/`; GitHub displays the final published URL after a successful workflow run. The build itself does not publish the site until the workflow runs on GitHub.
+For a local production build and preview:
 
-## Local development
+```powershell
+$env:VITE_DEMO_MODE = 'true'
+$env:VITE_PAGES_BASE = '/'
+npm run build
+npm run preview
+```
 
-- Backend: create a virtual environment in `backend`, install `requirements.txt`, set `DATABASE_URL`, then run `uvicorn app.main:app --reload` from `backend`.
-- Frontend: run `npm install` and `npm run dev` from `frontend`.
+The build output is `frontend/dist`. To build for the repository’s GitHub Pages project URL, set the Pages subpath instead:
 
-## Demo data and walkthrough
+```powershell
+$env:VITE_DEMO_MODE = 'true'
+$env:VITE_PAGES_BASE = '/personal_os/'
+npm run build
+```
 
-The walkthrough starts after a user creates an account through the frontend and signs in for the first time. Use **Help** in the top bar to launch it again. Its started and finished state is stored in this browser, scoped to the signed-in user; it does not sync to another browser or device. Accounts created outside the frontend registration flow can start it with **Help**.
+The deployment workflow sets the base path from the repository name automatically. Open a new PowerShell session, or remove the variables, before building the full application:
 
-Demo data is created only by an explicit command. Start the local Compose services, choose a local-only password for the dedicated demo account, then run:
+```powershell
+Remove-Item Env:\VITE_DEMO_MODE -ErrorAction SilentlyContinue
+Remove-Item Env:\VITE_PAGES_BASE -ErrorAction SilentlyContinue
+```
+
+### Publish the demo with GitHub Pages
+
+The workflow at `.github/workflows/deploy-pages.yml`:
+
+1. Runs on pushes to `main` and on manual workflow dispatch.
+2. Sets up Node.js 22 and installs the frontend from `frontend/package-lock.json` with `npm ci`.
+3. Builds the frontend with demo mode explicitly enabled and the repository-specific Pages base path.
+4. Uploads only `frontend/dist` as the Pages artifact and deploys it to the `github-pages` environment.
+
+To enable deployment:
+
+1. Push or merge the workflow to the `main` branch.
+2. In the GitHub repository, open **Settings → Pages** and set the source/build-and-deployment method to **GitHub Actions**.
+3. Open the **Actions** tab, select **Deploy GitHub Pages**, and check the run. You can also start it with **Run workflow**.
+4. Once a run succeeds, find the live URL in the workflow deployment summary or **Settings → Pages**.
+
+The expected project-site URL is <https://mariamahmed004.github.io/personal_os/>. This repository’s Pages URL has not been verified by a successful GitHub deployment yet. No backend, database, Docker configuration, secrets, or private tokens are included in the Pages artifact. Vite variables are public build-time configuration; never put secrets in `VITE_*` variables.
+
+## Run the backend and frontend separately
+
+This option is for development when you want to run the API and frontend outside the Compose stack. You still need a reachable PostgreSQL database and, if testing AI, an Ollama service.
+
+### Backend
+
+1. Start or provide PostgreSQL. One option is to run only the database service from the repository root:
+
+   ```powershell
+   docker compose up -d db
+   ```
+
+2. In a separate PowerShell terminal, configure and install the backend:
+
+   ```powershell
+   Set-Location backend
+   py -3.12 -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   python -m pip install -r requirements.txt
+   Copy-Item ..\.env.example .env
+   ```
+
+3. Update `backend/.env` for your local setup. Set `DATABASE_URL` to a PostgreSQL URL reachable from Windows (for the Compose database, use `localhost` as the host and the configured local port). Set a private `SECRET_KEY`, and set `OLLAMA_URL=http://localhost:11434` if using host-installed Ollama.
+
+4. Run the API from the `backend` directory:
+
+   ```powershell
+   uvicorn app.main:app --reload
+   ```
+
+   The API should be available at <http://localhost:8000>; docs at <http://localhost:8000/docs>.
+
+If PowerShell prevents virtual-environment activation, use `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` and `.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload` instead.
+
+### Frontend connected to the API
+
+In another terminal:
+
+```powershell
+Set-Location frontend
+npm ci
+$env:VITE_API_URL = 'http://localhost:8000/api/v1'
+npm run dev
+```
+
+Open <http://localhost:5173>. Do not set `VITE_DEMO_MODE` for this full-app frontend; without the exact value `true`, it uses the real API and authentication flow.
+
+## Demo account and database seed data
+
+There are two different kinds of demo data:
+
+1. **GitHub Pages/local frontend demo:** sample records are bundled in the frontend and live only in browser memory. No account or database seeding is needed.
+2. **Optional Compose demo account:** a dedicated account with records stored in the local PostgreSQL database, useful for trying the full authenticated application. This is separate from the Pages demo.
+
+To create the optional local demo account, start the Compose stack, then run from the repository root in PowerShell:
 
 ```powershell
 $env:KANLI_DEMO_SEED_ALLOWED = '1'
-$env:KANLI_DEMO_PASSWORD = Read-Host 'Choose a password for the local demo account'
+$env:KANLI_DEMO_PASSWORD = Read-Host 'Choose a local demo account password (8+ characters)'
 docker compose exec -e KANLI_DEMO_SEED_ALLOWED -e KANLI_DEMO_PASSWORD api python -m app.seed_demo
 Remove-Item Env:\KANLI_DEMO_PASSWORD
 Remove-Item Env:\KANLI_DEMO_SEED_ALLOWED
 ```
 
-The seed command requires the explicit `KANLI_DEMO_SEED_ALLOWED=1` confirmation, `APP_ENV=development`, and the local `personal_os` database/account. It creates `demo@kanli.local` with the password supplied in `KANLI_DEMO_PASSWORD`; it never changes the password or existing records when rerun. Sign in with that account and navigate the calendar to **October 25–31, 2026** to see the fixed sample week, including a day without scheduled events or habits. The sample includes recurring habits, events, Daily Sheets and tasks, wins, highlights, morning/evening moods, unscheduled items, and a weekly reflection.
+Sign in at <http://localhost:5173> with email `demo@kanli.local` and the password you entered. The seeded sample week is October 25–31, 2026; visit that week in the calendar to see the sample records.
 
-To remove only the dedicated demo account and its user-owned data, then optionally reseed it, run:
+The seed command is explicit and guarded: it requires `APP_ENV=development`, `KANLI_DEMO_SEED_ALLOWED=1`, and the local `personal_os` database/account. It does not run at startup. Rerunning it adds only missing records and does not change existing records or the existing demo password.
+
+To delete only this dedicated demo account and its user-owned records:
 
 ```powershell
 $env:KANLI_DEMO_SEED_ALLOWED = '1'
@@ -75,8 +266,79 @@ docker compose exec -e KANLI_DEMO_SEED_ALLOWED api python -m app.seed_demo --res
 Remove-Item Env:\KANLI_DEMO_SEED_ALLOWED
 ```
 
-Use this only for the local demo account: resetting removes all data owned by `demo@kanli.local`, including anything you added while signed in as that account. It does not remove other users' data or reset the database volume. The seed command is never run automatically on application startup.
+Resetting permanently removes all data owned by `demo@kanli.local`, including anything added while signed in as that account. It does not remove other users' data or reset the database volume.
 
-Habit and event occurrence completion is stored alongside ordinary tasks in the existing date- and user-scoped Daily Sheet JSON field; no database migration or API route change is required. The model currently has no separate "skipped" state, so an unchecked occurrence remains incomplete rather than being recorded as skipped.
+## Common tasks
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) and [PROJECT_GUIDE.txt](./PROJECT_GUIDE.txt) for structure and design decisions.
+Run frontend checks/build:
+
+```powershell
+Set-Location frontend
+npm ci
+npm run build
+```
+
+Check or rebuild Docker services:
+
+```powershell
+docker compose ps
+docker compose up --build -d
+docker compose logs -f api
+```
+
+Explore the HTTP API at <http://localhost:8000/docs>. Protected API routes require a bearer token from the normal login flow.
+
+## Troubleshooting
+
+### `The Ollama model is unavailable`
+
+Pull the model into the Compose Ollama service:
+
+```powershell
+docker compose exec ollama ollama pull qwen3:14b
+```
+
+Then confirm Ollama and the API are running with `docker compose ps` and retry. The download can take a while.
+
+### The browser says the API is unavailable
+
+- Confirm `api` and `db` are running: `docker compose ps`.
+- Check logs: `docker compose logs api db`.
+- Confirm the frontend uses `VITE_API_URL=http://localhost:8000/api/v1` when connecting from the browser. Do not use the Docker-only hostname `api` in the browser URL.
+- For a separately run backend, check its `.env`, database URL, and terminal output.
+
+### Login fails or shows an expired-token alert
+
+The full app requires an account and a running API. Register or sign in again at <http://localhost:5173>. If the token is expired, signing out and signing in again requests a fresh token.
+
+### The frontend looks like the login page instead of the demo
+
+The public demo flag is a **build-time** setting. Stop Vite, set `VITE_DEMO_MODE=true`, and start/build again from the `frontend` directory. The regular Compose frontend intentionally does not enable demo mode.
+
+### GitHub Pages displays a 404 or missing assets
+
+- Confirm the Pages source is **GitHub Actions**.
+- Check that the **Deploy GitHub Pages** workflow succeeded on `main`.
+- Confirm the repository is using the expected project URL and the workflow’s base path is `/<repository-name>/`.
+- Use the `/#/page` hash route for direct navigation and refresh.
+
+## Project structure
+
+```text
+backend/                 FastAPI app, auth, feature routes, database access
+frontend/src/app/        Layout, routing, authentication guard, theme, walkthrough
+frontend/src/features/   Dashboard, Daily Sheet, calendar, habits, backlog, journal, settings
+frontend/src/shared/     API client, shared types, icons
+frontend/src/demo/       Explicit demo-mode flag, typed fixtures, in-memory API adapter
+.github/workflows/       GitHub Pages deployment workflow
+docker-compose.yml       Local full-application services
+```
+
+For design notes and current architectural decisions, see [ARCHITECTURE.md](./ARCHITECTURE.md) and [PROJECT_GUIDE.txt](./PROJECT_GUIDE.txt).
+
+## Known limitations
+
+- GitHub Pages hosts only the frontend demo; it does not provide FastAPI, PostgreSQL, account registration, persistent storage, or AI. Demo changes reset on refresh.
+- The AI assistant requires a running Ollama service and the configured model in the full application.
+- The API currently creates tables during startup. The project is an initial scaffold and should use Alembic migrations and production hardening before production deployment.
+- GitHub Pages publication must be enabled in repository settings, and the workflow must complete successfully before the public demo is available.
