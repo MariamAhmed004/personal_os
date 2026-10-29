@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Alert, Badge, Button, Card, Col, Form, ListGroup, Row } from "react-bootstrap";
+import { Alert, Badge, Button, Card, Col, Form, ListGroup, Modal, Row } from "react-bootstrap";
 import { Link } from "react-router-dom";
 import { api } from "../../shared/api";
 import type { DailySheet, MoodEntry, Reflection } from "../../shared/types";
@@ -20,6 +20,8 @@ export function JournalPage() {
   const [editingReflection, setEditingReflection] = useState<string | null>(null);
   const [reflectionDraft, setReflectionDraft] = useState("");
   const [error, setError] = useState("");
+  const [moodMonth, setMoodMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [selectedMood, setSelectedMood] = useState<MoodEntry | null>(null);
 
   async function refresh() {
     try {
@@ -36,6 +38,21 @@ export function JournalPage() {
     }
   }
   useEffect(() => { void refresh(); }, []);
+
+  const moodCalendarDays = (() => {
+    const firstOfMonth = new Date(moodMonth.getFullYear(), moodMonth.getMonth(), 1);
+    const firstVisible = new Date(firstOfMonth);
+    firstVisible.setDate(firstVisible.getDate() - firstVisible.getDay());
+    return Array.from({ length: 42 }, (_, index) => {
+      const date = new Date(firstVisible);
+      date.setDate(firstVisible.getDate() + index);
+      return date;
+    });
+  })();
+
+  function moveMoodMonth(offset: number) {
+    setMoodMonth((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1));
+  }
 
   async function deleteMood(id: string) {
     try {
@@ -74,13 +91,62 @@ export function JournalPage() {
 
   return (
     <>
-      <div className="page-heading"><p className="eyebrow mb-2">Look back with kindness</p><h1 className="page-title"><Icon name="journal" className="heading-icon" />Your journal</h1><p className="page-subtitle">A quiet place for the moments, thoughts, and feelings you want to keep.</p></div>
+      <div className="page-heading" data-tour="journal"><p className="eyebrow mb-2">Look back with kindness</p><h1 className="page-title"><Icon name="journal" className="heading-icon" />Your journal</h1><p className="page-subtitle">A quiet place for the moments, thoughts, and feelings you want to keep.</p></div>
       {error && <Alert variant="danger">{error}</Alert>}
       <Row className="g-3 mb-4">
         <Col lg={5}>
           <Card className="surface-card accent-rose h-100"><Card.Body>
-            <p className="eyebrow">Mood moments</p>
-            <p className="small text-secondary">Check in on today’s Daily Sheet. Your past moments stay here.</p>
+            <div className="d-flex align-items-center justify-content-between gap-2 mb-2">
+              <p className="eyebrow mb-0">Mood moments</p>
+              <div className="d-flex align-items-center gap-2">
+                <Button size="sm" variant="outline-secondary" aria-label="Previous mood month" onClick={() => moveMoodMonth(-1)}>‹</Button>
+                <span className="small fw-semibold" aria-live="polite">
+                  {new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(moodMonth)}
+                </span>
+                <Button size="sm" variant="outline-secondary" aria-label="Next mood month" onClick={() => moveMoodMonth(1)}>›</Button>
+              </div>
+            </div>
+            <div className="journal-mood-weekdays" aria-hidden="true">
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <span key={day}>{day}</span>)}
+            </div>
+            <div className="journal-mood-calendar" role="grid" aria-label="Mood check-ins by date">
+              {moodCalendarDays.map((date) => {
+                const dateKey = localDateForJournal(date);
+                const dayMoods = moods.filter((entry) => entry.entry_date === dateKey);
+                const isCurrentMonth = date.getMonth() === moodMonth.getMonth();
+                return (
+                  <div className={`journal-mood-day${isCurrentMonth ? "" : " outside"}`} role="gridcell" aria-label={dateKey} key={dateKey}>
+                    <span className="journal-mood-date">{date.getDate()}</span>
+                    <div className="journal-mood-stamps">
+                      {(["morning", "evening"] as const).map((period) => {
+                        const entry = dayMoods.find((mood) => mood.period === period);
+                        if (!entry) return null;
+                        const emoji = ({ great: "😀", good: "🙂", okay: "😐", low: "😔" } as Record<string, string>)[entry.mood] ?? "•";
+                        const periodLabel = period === "morning" ? "Beginning-of-day" : "End-of-day";
+                        return (
+                          <button
+                            type="button"
+                            className={`journal-mood-stamp ${period}`}
+                            key={entry.id}
+                            aria-label={`${periodLabel} mood on ${dateKey}: ${entry.mood}${entry.note ? `. ${entry.note}` : ""}. View details`}
+                            title={`${periodLabel}: ${entry.mood}`}
+                            onClick={() => setSelectedMood(entry)}
+                          >
+                            <span aria-hidden="true">{emoji}</span>
+                            <span>{period === "morning" ? "AM" : "PM"}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="journal-mood-legend small text-secondary mt-2">
+              <span><span className="journal-mood-legend-dot morning" /> AM · Beginning of day</span>
+              <span><span className="journal-mood-legend-dot evening" /> PM · End of day</span>
+            </div>
+            <p className="small text-secondary mt-3 mb-2">Check in on today’s Daily Sheet. Your past moments stay here.</p>
             <ListGroup variant="flush">{moods.slice(0, 6).map((entry) => (
               <ListGroup.Item key={entry.id} className="bg-transparent d-flex justify-content-between align-items-center gap-2 px-0">
                 <span><span className="me-2" aria-hidden="true">{({ great: "😀", good: "🙂", okay: "😐", low: "😔" } as Record<string, string>)[entry.mood] ?? "🙂"}</span><span className="text-capitalize">{entry.mood}</span><span className="text-secondary small"> · {entry.entry_date} · {entry.period}</span>{entry.note && <div className="small text-secondary">{entry.note}</div>}</span>
@@ -121,13 +187,38 @@ export function JournalPage() {
                 {sheet.is_edited_later && <Badge bg="info">Edited Later</Badge>}
               </div>
               {sheet.highlights?.length ? <><p className="muted-label mb-1">Highlights</p><ul>{sheet.highlights.map((highlight, i) => <li key={`${i}-${highlight}`}>{highlight}</li>)}</ul></> : null}
-              {sheet.tasks?.length ? <><p className="muted-label mb-1">Tasks</p><ul>{sheet.tasks.map((task, i) => <li key={`${i}-${task.title}`}>{task.title}</li>)}</ul></> : null}
+              {sheet.tasks?.some((task) => task.type !== "schedule_completion" && task.title) ? <><p className="muted-label mb-1">Tasks</p><ul>{sheet.tasks.filter((task) => task.type !== "schedule_completion" && task.title).map((task, i) => <li key={`${i}-${task.title}`}>{task.title}</li>)}</ul></> : null}
               {sheet.notes && <><p className="muted-label mb-1">Notes</p><p className="text-secondary">{sheet.notes}</p></>}
               <Link to={`/daily-sheet?date=${sheet.sheet_date}`}><Button variant="outline-primary" size="sm">View / edit</Button></Link>
             </Card.Body></Card>
           </Col>
         ))}</Row>
       )}
+      <Modal show={Boolean(selectedMood)} onHide={() => setSelectedMood(null)} centered>
+        <Modal.Header closeButton><Modal.Title>Mood check-in</Modal.Title></Modal.Header>
+        <Modal.Body>
+          {selectedMood && (
+            <>
+              <p className="small text-secondary mb-2">
+                {selectedMood.period === "morning" ? "Beginning-of-day" : "End-of-day"} · {selectedMood.entry_date}
+              </p>
+              <p className="h5 text-capitalize">{selectedMood.mood}</p>
+              {selectedMood.note && <p className="mb-0">{selectedMood.note}</p>}
+            </>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Link
+            className="btn btn-primary"
+            to={`/daily-sheet?date=${selectedMood?.entry_date ?? localDate()}`}
+            onClick={() => setSelectedMood(null)}
+          >View Daily Sheet</Link>
+        </Modal.Footer>
+      </Modal>
     </>
   );
+}
+
+function localDateForJournal(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }

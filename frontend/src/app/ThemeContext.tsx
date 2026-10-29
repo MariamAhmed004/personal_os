@@ -1,4 +1,5 @@
 import { createContext, useContext, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { isDemoMode } from "../demo/config";
 
 export type Theme = "dark" | "light";
 
@@ -10,8 +11,12 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 const THEME_STORAGE_KEY = "personal-os-theme";
 
+function themeStorage() {
+  return isDemoMode ? sessionStorage : localStorage;
+}
+
 function initialTheme(): Theme {
-  return localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
+  return themeStorage().getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -21,7 +26,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     document.documentElement.dataset.bsTheme = theme;
     document.documentElement.style.colorScheme = theme;
     document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#1f1f1f" : "#f7f8f3");
-    localStorage.setItem(THEME_STORAGE_KEY, theme);
+    themeStorage().setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
   const value = useMemo(() => ({

@@ -30,7 +30,7 @@ export function BacklogPage() {
 
   async function refresh() {
     try { setItems(await api<BacklogItem[]>("/backlog/items")); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load backlog."); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load your list."); }
   }
   useEffect(() => { void refresh(); }, []);
 
@@ -99,7 +99,7 @@ export function BacklogPage() {
 
   return (
     <>
-      <div className="page-heading"><p className="eyebrow mb-2">Ideas for another day</p><h1 className="page-title"><Icon name="backlog" className="heading-icon" />Your backlog</h1><p className="page-subtitle">A soft landing place for things you’d like to do, when the time feels right.</p></div>
+      <div className="page-heading" data-tour="for-later"><p className="eyebrow mb-2">Ideas for another day</p><h1 className="page-title"><Icon name="backlog" className="heading-icon" />Things for later</h1><p className="page-subtitle">A soft landing place for things you’d like to do, when the time feels right.</p></div>
       {error && !scheduling && <Alert variant="danger">{error}</Alert>}
       {success && <Alert variant="success">{success}</Alert>}
       <Card className="surface-card accent-amber mb-4">
@@ -112,7 +112,7 @@ export function BacklogPage() {
           </Form>
         </Card.Body>
       </Card>
-      {items.length === 0 ? <Card className="surface-card"><Card.Body className="p-4 text-secondary">Your backlog is clear for now. Enjoy the breathing room.</Card.Body></Card> : (
+      {items.length === 0 ? <Card className="surface-card"><Card.Body className="p-4 text-secondary">Your list is clear for now. Enjoy the breathing room.</Card.Body></Card> : (
         <div className="planner-grid">
           {items.map((item) => (
             <div className="planner-span-6" key={item.id}>

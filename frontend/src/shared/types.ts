@@ -18,7 +18,13 @@ export interface BacklogItem {
 export interface DailySheet {
   id: string;
   sheet_date: string;
-  tasks: Array<{ title?: string; completed?: boolean }> | null;
+  tasks: Array<{
+    title?: string;
+    completed?: boolean;
+    type?: "schedule_completion";
+    item_type?: "habit" | "event";
+    item_id?: string;
+  }> | null;
   highlights: string[] | null;
   notes: string | null;
   is_edited_later: boolean;

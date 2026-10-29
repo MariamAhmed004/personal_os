@@ -38,6 +38,15 @@ ai_service = AIService(settings.ollama_url)
 proposal_adapter = TypeAdapter(ActionProposal)
 MESSAGE_FORMAT = "personal_os_chat_v1"
 MODEL_CONTEXT_LIMIT = 30
+SUPPORTED_ACTIONS = {
+    "create_event",
+    "create_backlog_item",
+    "schedule_backlog_item",
+}
+
+
+class InvalidScheduleProposalError(Exception):
+    pass
 
 
 def _assistant_envelope(content: str) -> dict[str, Any] | None:
@@ -48,6 +57,79 @@ def _assistant_envelope(content: str) -> dict[str, Any] | None:
     if isinstance(envelope, dict) and envelope.get("format") == MESSAGE_FORMAT:
         return envelope
     return None
+
+
+def _normalize_completion_json(content: str) -> str:
+    try:
+        completion = json.loads(content)
+    except (TypeError, ValueError):
+        return content
+    if not isinstance(completion, dict):
+        return content
+
+    proposal = completion.get("proposal")
+    if not isinstance(proposal, dict) or "action" in proposal or len(proposal) != 1:
+        return content
+
+    action, details = next(iter(proposal.items()))
+    if action not in SUPPORTED_ACTIONS or not isinstance(details, dict):
+        return content
+
+    completion["proposal"] = {"action": action, **details}
+    return json.dumps(completion, ensure_ascii=False)
+
+
+def _completion_validation_detail(error: ValidationError) -> str:
+    errors = error.errors(include_input=False)
+    if any(item["type"] == "json_invalid" for item in errors):
+        return "The AI reply was not valid JSON. Please try again."
+
+    if any(item["loc"] and item["loc"][0] == "response" for item in errors):
+        return "The AI reply is missing a valid text response. Please try again."
+
+    if any(item["type"] in {"union_tag_invalid", "union_tag_not_found"} for item in errors):
+        return (
+            "The AI suggested an unsupported action. It can create a calendar event, add an item to For Later, "
+            "or schedule an existing item from For Later."
+        )
+
+    validation_messages = {
+        str(item.get("ctx", {}).get("error", ""))
+        for item in errors
+        if item["type"] == "value_error" and item.get("ctx")
+    }
+    if "Proposal event times must include a timezone" in validation_messages:
+        return "The proposed event time is missing a timezone. Please include the local date and time."
+    if "ends_at must be later than starts_at" in validation_messages:
+        return "The proposed end time must be later than its start time. Please try again with a valid time range."
+
+    field_labels = {
+        "backlog_item_id": "For Later item",
+        "description": "description",
+        "ends_at": "end time",
+        "event_type": "event type",
+        "location": "location",
+        "starts_at": "start time",
+        "title": "title",
+    }
+    fields = sorted({
+        field_labels.get(item["loc"][-1], item["loc"][-1])
+        for item in errors
+        if item["loc"]
+        and item["loc"][0] == "proposal"
+        and isinstance(item["loc"][-1], str)
+        and item["loc"][-1] not in {"create_event", "create_backlog_item", "schedule_backlog_item"}
+    })
+    if fields:
+        return f"The action proposal has missing or invalid information for: {', '.join(fields)}. Please try again."
+
+    return "The AI reply did not match the expected chat format. Please try again."
+
+
+def _include_debug_response(detail: str, generated: str) -> str:
+    if not settings.ai_debug_responses:
+        return detail
+    return f"{detail}\n\nOllama response:\n{generated}"
 
 
 def _read_message(message: ChatMessage) -> ChatMessageRead:
@@ -191,7 +273,9 @@ def _validate_schedule_proposal(db: Session, user: User, proposal: ActionProposa
         )
     )
     if item is None:
-        raise ValueError("The proposed backlog item is not available.")
+        raise InvalidScheduleProposalError(
+            "That item is no longer available. Ask me to schedule an item from For Later."
+        )
     proposal.title = item.title
     local_zone = ZoneInfo(timezone_name)
     proposal.starts_at = proposal.starts_at.astimezone(local_zone)
@@ -235,19 +319,31 @@ async def chat(
         raise HTTPException(status_code=error.status_code, detail=error.detail) from error
 
     try:
-        completion = ChatCompletion.model_validate_json(generated)
-        if completion.proposal is not None:
-            completion.proposal = _validate_schedule_proposal(db, user, completion.proposal, data.timezone)
-    except (ValidationError, ValueError):
+        completion = ChatCompletion.model_validate_json(_normalize_completion_json(generated))
+    except ValidationError as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="The assistant returned an invalid action proposal. Please try again.",
+            detail=_include_debug_response(_completion_validation_detail(error), generated),
         ) from None
 
+    if completion.proposal is not None:
+        try:
+            completion.proposal = _validate_schedule_proposal(db, user, completion.proposal, data.timezone)
+        except InvalidScheduleProposalError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=_include_debug_response(str(error), generated),
+            ) from None
+
+    response_text = (
+        "I’ve prepared this for your review. Please approve the proposal below if it looks right."
+        if completion.proposal is not None
+        else completion.response
+    )
     assistant_message = _store_assistant_message(
         db,
         user.id,
-        completion.response,
+        response_text,
         completion.proposal,
     )
     return ChatResponse(
@@ -321,7 +417,7 @@ def decide_proposal(
             )
             if item is None:
                 db.rollback()
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="The backlog item is no longer available")
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="The item is no longer available")
             record = CalendarEvent(
                 user_id=user.id,
                 title=item.title,

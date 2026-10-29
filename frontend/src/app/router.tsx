@@ -1,4 +1,5 @@
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, createHashRouter } from "react-router-dom";
+import { isDemoMode } from "../demo/config";
 import { Layout } from "./Layout";
 import { ProtectedRoute } from "./ProtectedRoute";
 import { BacklogPage } from "../features/backlog/BacklogPage";
@@ -10,7 +11,7 @@ import { JournalPage } from "../features/journal/JournalPage";
 import { LoginPage } from "../features/auth/LoginPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 
-export const router = createBrowserRouter([
+const routes = [
   { path: "/login", element: <LoginPage /> },
   {
     element: <ProtectedRoute />,
@@ -27,4 +28,6 @@ export const router = createBrowserRouter([
       ],
     }],
   },
-]);
+];
+
+export const router = isDemoMode ? createHashRouter(routes) : createBrowserRouter(routes);

@@ -1,5 +1,6 @@
 import { Navigate, Outlet } from "react-router-dom";
+import { isDemoMode } from "../demo/config";
 
 export function ProtectedRoute() {
-  return localStorage.getItem("access_token") ? <Outlet /> : <Navigate to="/login" replace />;
+  return isDemoMode || localStorage.getItem("access_token") ? <Outlet /> : <Navigate to="/login" replace />;
 }

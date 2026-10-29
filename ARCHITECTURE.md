@@ -2,7 +2,7 @@
 
 ## Product center
 
-The Daily Sheet is the user's day-level workspace and the primary planning surface. Habits, calendar events, backlog items, mood entries, and reflections are structured inputs that can be presented in a Daily Sheet. In this initial version, records remain independently manageable and no AI process creates or changes user data.
+The Daily Sheet is the user's day-level workspace and the primary planning surface. Habits, calendar events, backlog items, mood entries, and reflections are structured inputs that can be presented in a Daily Sheet. The local AI chat can propose actions, but personal data is changed only after the user explicitly approves a proposal.
 
 ## System context
 
@@ -15,14 +15,14 @@ FastAPI feature routers ── shared authentication and database session
         ▼
 PostgreSQL
 
-Future, not wired: AI application services → local model adapter (for example Ollama)
+FastAPI AI chat service → Ollama (Qwen3 14B, optional local model provider)
 ```
 
 ## Backend organization
 
 Features own their API concerns: routes, schemas, models and (as behavior grows) services/repositories. `core` owns cross-cutting configuration and security; `database` owns engine/session setup; `shared` holds reusable primitives. Features must not depend on frontend presentation details. Keep cross-feature orchestration in an application-level service rather than coupling route modules.
 
-The `features/ai` package defines names and seams for future prompt building, planning, chat and suggestions. It does not call a model, make network requests, or persist AI-generated changes.
+The `features/ai` package provides the chat routes and calls the configured Ollama model. Chat messages and approval decisions use the existing chat persistence; approved proposals are applied through existing feature models and do not change the database schema.
 
 ## Data and safety principles
 
@@ -47,13 +47,13 @@ All routes are under `/api/v1`.
 | Mood | `GET/POST /moods`, `GET/PATCH/DELETE /moods/{id}` |
 | Reflections | `GET/POST /reflections`, `GET/PATCH/DELETE /reflections/{id}` |
 | Suggestions | Reserved; future approval workflow |
-| Chat | Reserved; no model or chat functionality yet |
+| Chat | `GET /ai/chat/history`, `POST /ai/chat`, `POST /ai/chat/{message_id}/decision` |
 
-The initial implementation includes CRUD routes for habits, calendar events, backlog items, daily sheets, moods, and reflections. Auth is intentionally a small first implementation. Chat and suggestion route behavior will be added alongside their approval and data-retention requirements.
+The implementation includes CRUD routes for habits, calendar events, backlog items, daily sheets, moods, and reflections, plus local-model chat with an explicit proposal approval flow. Auth is intentionally a small first implementation. Suggestions remain reserved for future work.
 
 ## Frontend organization
 
-Pages live under `features/`, with feature-specific API clients and components kept close to their use. Shared layout, route protection, API transport and theme live in `app/` and `shared/`. The dashboard uses explicit placeholder cards for AI; the controls do not imply that a model is connected.
+Pages live under `features/`, with feature-specific API clients and components kept close to their use. Shared layout, route protection, API transport and theme live in `app/` and `shared/`. The Home assistant uses the local model when Ollama and Qwen3 14B are available.
 
 ## Next architectural steps
 
@@ -61,4 +61,4 @@ Pages live under `features/`, with feature-specific API clients and components k
 2. Add automated backend/frontend tests and CI.
 3. Add durable refresh-token and account lifecycle decisions.
 4. Define suggestion provenance, approval, denial and application semantics.
-5. Add an AI provider interface behind an opt-in feature flag; keep model calls outside request-critical planning logic.
+5. Keep AI model use optional so core planning remains available without Ollama.

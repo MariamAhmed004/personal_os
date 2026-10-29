@@ -5,6 +5,43 @@ import { api, ApiError } from "../../shared/api";
 import type { CalendarEvent, DailySheet, Habit, MoodEntry } from "../../shared/types";
 import { Icon } from "../../shared/Icon";
 
+interface SheetTask {
+  title: string;
+  completed: boolean;
+}
+
+interface ScheduleItem {
+  id: string;
+  itemId: string;
+  itemType: "habit" | "event";
+  title: string;
+  startsAt: string;
+  endsAt: string | null;
+  completed: boolean;
+}
+
+type MoodPeriod = MoodEntry["period"];
+
+interface MoodDraft {
+  mood: string;
+  note: string;
+}
+
+interface ScheduleCompletion {
+  type: "schedule_completion";
+  item_type: "habit" | "event";
+  item_id: string;
+  completed: true;
+}
+
+type ScheduleCompletionKey = `${"habit" | "event"}:${string}`;
+
+const moodOptions = [["great", "😀"], ["good", "🙂"], ["okay", "😐"], ["low", "😔"]] as const;
+
+function scheduleKey(itemType: ScheduleCompletion["item_type"], itemId: string): ScheduleCompletionKey {
+  return `${itemType}:${itemId}`;
+}
+
 function localDate() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -15,34 +52,49 @@ function dateInLocalTime(value: string) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+function formatTime(value: string) {
+  return new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 export function DailySheetPage() {
   const [searchParams] = useSearchParams();
   const sheetDate = searchParams.get("date") ?? localDate();
-  const moodPeriod: "morning" | "evening" = new Date().getHours() < 15 ? "morning" : "evening";
   const [sheet, setSheet] = useState<DailySheet | null>(null);
-  const [notes, setNotes] = useState("");
-  const [highlightsText, setHighlightsText] = useState("");
-  const [tasksText, setTasksText] = useState("");
-  const [showHighlights, setShowHighlights] = useState(false);
-  const [showTasks, setShowTasks] = useState(false);
-  const [showNotes, setShowNotes] = useState(false);
+  const [notes, setNotes] = useState<string[]>([]);
+  const [noteInput, setNoteInput] = useState("");
+  const [highlights, setHighlights] = useState<string[]>([]);
+  const [highlightInput, setHighlightInput] = useState("");
+  const [tasks, setTasks] = useState<SheetTask[]>([]);
+  const [taskInput, setTaskInput] = useState("");
   const [scheduleEvents, setScheduleEvents] = useState<CalendarEvent[]>([]);
   const [scheduledHabits, setScheduledHabits] = useState<Habit[]>([]);
+  const [scheduleCompletions, setScheduleCompletions] = useState<Set<ScheduleCompletionKey>>(new Set());
+  const [scheduleStateLoaded, setScheduleStateLoaded] = useState(false);
+  const [savingScheduleItem, setSavingScheduleItem] = useState<string | null>(null);
   const [moods, setMoods] = useState<MoodEntry[]>([]);
-  const [selectedMood, setSelectedMood] = useState("good");
-  const [moodNote, setMoodNote] = useState("");
-  const [moodSaved, setMoodSaved] = useState(false);
+  const [moodDrafts, setMoodDrafts] = useState<Record<MoodPeriod, MoodDraft>>({
+    morning: { mood: "good", note: "" },
+    evening: { mood: "good", note: "" },
+  });
+  const [moodEditing, setMoodEditing] = useState<Record<MoodPeriod, boolean>>({
+    morning: false,
+    evening: false,
+  });
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     setSheet(null);
-    setNotes("");
-    setHighlightsText("");
-    setTasksText("");
-    setShowHighlights(false);
-    setShowTasks(false);
-    setShowNotes(false);
+    setNotes([]);
+    setNoteInput("");
+    setHighlights([]);
+    setHighlightInput("");
+    setTasks([]);
+    setTaskInput("");
+    setMoods([]);
+    setScheduleCompletions(new Set());
+    setScheduleStateLoaded(false);
+    setMoodEditing({ morning: false, evening: false });
     setError("");
     Promise.all([
       api<DailySheet>(`/daily-sheets/by-date/${sheetDate}`).catch((cause: unknown) => {
@@ -55,20 +107,35 @@ export function DailySheetPage() {
     ]).then(([existing, events, habits, entries]) => {
       setSheet(existing);
       if (existing) {
-        setNotes(existing.notes ?? "");
-        setHighlightsText(existing.highlights?.join("\n") ?? "");
-        setTasksText(existing.tasks?.map((task) => task.title ?? "").join("\n") ?? "");
-        setShowHighlights(Boolean(existing.highlights?.length));
-        setShowTasks(Boolean(existing.tasks?.length));
-        setShowNotes(Boolean(existing.notes));
+        setNotes((existing.notes ?? "").split("\n").map((note) => note.trim()).filter(Boolean));
+        setHighlights(existing.highlights ?? []);
+        setTasks((existing.tasks ?? []).flatMap((task) => (
+          task.type === "schedule_completion"
+            ? []
+            : typeof task.title === "string" && task.title.trim()
+              ? [{ title: task.title, completed: Boolean(task.completed) }]
+              : []
+        )));
+        setScheduleCompletions(new Set((existing.tasks ?? []).flatMap((task): ScheduleCompletionKey[] => (
+          task.type === "schedule_completion"
+            && task.completed === true
+            && (task.item_type === "habit" || task.item_type === "event")
+            && typeof task.item_id === "string"
+            ? [scheduleKey(task.item_type, task.item_id)]
+            : []
+        ))));
       }
       setScheduleEvents(events.filter((event) => dateInLocalTime(event.starts_at) === sheetDate));
-      const todayMood = entries.find((entry) => entry.entry_date === sheetDate && entry.period === moodPeriod);
-      setSelectedMood(todayMood?.mood ?? "good");
-      setMoodNote(todayMood?.note ?? "");
+      const morningMood = entries.find((entry) => entry.entry_date === sheetDate && entry.period === "morning");
+      const eveningMood = entries.find((entry) => entry.entry_date === sheetDate && entry.period === "evening");
+      setMoodDrafts({
+        morning: { mood: morningMood?.mood ?? "good", note: morningMood?.note ?? "" },
+        evening: { mood: eveningMood?.mood ?? "good", note: eveningMood?.note ?? "" },
+      });
       const weekday = (new Date(`${sheetDate}T12:00:00`).getDay() + 6) % 7;
       setScheduledHabits(habits.filter((habit) => habit.is_active && habit.starts_on <= sheetDate && habit.days_of_week.includes(weekday)));
       setMoods(entries.filter((entry) => entry.entry_date === sheetDate));
+      setScheduleStateLoaded(true);
     }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Could not load your Daily Sheet."));
   }, [sheetDate]);
 
@@ -77,9 +144,9 @@ export function DailySheetPage() {
     setError("");
     setSaved(false);
     const body = {
-      notes: showNotes ? notes || null : undefined,
-      highlights: showHighlights ? highlightsText.split("\n").map((line) => line.trim()).filter(Boolean) : undefined,
-      tasks: showTasks ? tasksText.split("\n").map((title) => title.trim()).filter(Boolean).map((title) => ({ title, completed: false })) : undefined,
+      notes: notes.length ? notes.join("\n") : null,
+      highlights,
+      tasks: sheetTasks(tasks, scheduleCompletions),
     };
     try {
       const result = sheet
@@ -92,93 +159,326 @@ export function DailySheetPage() {
     }
   }
 
-  async function saveMood() {
+  function sheetTasks(currentTasks: SheetTask[], completedItems: Set<ScheduleCompletionKey>) {
+    const completionRecords: ScheduleCompletion[] = [...completedItems].flatMap((key) => {
+      const separator = key.indexOf(":");
+      const itemType = key.slice(0, separator);
+      const itemId = key.slice(separator + 1);
+      if ((itemType !== "habit" && itemType !== "event") || !itemId) return [];
+      return [{
+        type: "schedule_completion" as const,
+        item_type: itemType,
+        item_id: itemId,
+        completed: true as const,
+      }];
+    });
+    return [...currentTasks, ...completionRecords];
+  }
+
+  async function setScheduleItemCompleted(item: ScheduleItem, completed: boolean) {
+    const key = scheduleKey(item.itemType, item.itemId);
+    const nextCompletions = new Set(scheduleCompletions);
+    if (completed) nextCompletions.add(key);
+    else nextCompletions.delete(key);
+    setSavingScheduleItem(key);
     setError("");
-    setMoodSaved(false);
-    const existingMood = moods.find((entry) => entry.entry_date === sheetDate && entry.period === moodPeriod);
     try {
+      const savedSheet = sheet
+        ? await api<DailySheet>(`/daily-sheets/${sheet.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ tasks: sheetTasks(tasks, nextCompletions) }),
+        })
+        : await api<DailySheet>("/daily-sheets", {
+          method: "POST",
+          body: JSON.stringify({
+            sheet_date: sheetDate,
+            notes: notes.length ? notes.join("\n") : null,
+            highlights,
+            tasks: sheetTasks(tasks, nextCompletions),
+          }),
+        });
+      setSheet(savedSheet);
+      setScheduleCompletions(nextCompletions);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save this schedule update.");
+    } finally {
+      setSavingScheduleItem(null);
+    }
+  }
+
+  async function saveMood(period: MoodPeriod) {
+    setError("");
+    const existingMood = moods.find((entry) => entry.entry_date === sheetDate && entry.period === period);
+    const draft = moodDrafts[period];
+    try {
+      let savedMood: MoodEntry;
       if (existingMood) {
-        await api(`/moods/${existingMood.id}`, { method: "PATCH", body: JSON.stringify({ mood: selectedMood, note: moodNote || null }) });
+        savedMood = await api<MoodEntry>(`/moods/${existingMood.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ mood: draft.mood, note: draft.note || null }),
+        });
       } else {
-        await api("/moods", { method: "POST", body: JSON.stringify({ entry_date: sheetDate, period: moodPeriod, mood: selectedMood, note: moodNote || null }) });
+        savedMood = await api<MoodEntry>("/moods", {
+          method: "POST",
+          body: JSON.stringify({ entry_date: sheetDate, period, mood: draft.mood, note: draft.note || null }),
+        });
       }
-      setMoodSaved(true);
       setMoods((current) => {
-        const withoutCurrent = current.filter((entry) => !(entry.entry_date === sheetDate && entry.period === moodPeriod));
-        return [...withoutCurrent, { id: existingMood?.id ?? "saved", entry_date: sheetDate, period: moodPeriod, mood: selectedMood, note: moodNote || null }];
+        const withoutCurrent = current.filter((entry) => !(entry.entry_date === sheetDate && entry.period === period));
+        return [...withoutCurrent, savedMood];
       });
+      setMoodDrafts((current) => ({
+        ...current,
+        [period]: { mood: savedMood.mood, note: savedMood.note ?? "" },
+      }));
+      setMoodEditing((current) => ({ ...current, [period]: false }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save your mood.");
     }
   }
 
+  function cancelMoodEdit(period: MoodPeriod) {
+    const savedMood = moods.find((entry) => entry.entry_date === sheetDate && entry.period === period);
+    setMoodDrafts((current) => ({
+      ...current,
+      [period]: { mood: savedMood?.mood ?? "good", note: savedMood?.note ?? "" },
+    }));
+    setMoodEditing((current) => ({ ...current, [period]: false }));
+  }
+
+  function addNote() {
+    const value = noteInput.trim();
+    if (!value) return;
+    setNotes((current) => [...current, value]);
+    setNoteInput("");
+  }
+
+  function addHighlight() {
+    const value = highlightInput.trim();
+    if (!value) return;
+    setHighlights((current) => [...current, value]);
+    setHighlightInput("");
+  }
+
+  function addTask() {
+    const title = taskInput.trim();
+    if (!title) return;
+    setTasks((current) => [...current, { title, completed: false }]);
+    setTaskInput("");
+  }
+
+  const schedule: ScheduleItem[] = [
+    ...scheduleEvents.map((event) => ({
+      id: `event-${event.id}`,
+      itemId: event.id,
+      itemType: "event" as const,
+      title: event.title,
+      startsAt: event.starts_at,
+      endsAt: event.ends_at,
+      completed: scheduleCompletions.has(scheduleKey("event", event.id)),
+    })),
+    ...scheduledHabits.map((habit) => ({
+      id: `habit-${habit.id}`,
+      itemId: habit.id,
+      itemType: "habit" as const,
+      title: habit.title,
+      startsAt: habit.preferred_start_time ? `${sheetDate}T${habit.preferred_start_time}` : "",
+      endsAt: habit.preferred_end_time ? `${sheetDate}T${habit.preferred_end_time}` : null,
+      completed: scheduleCompletions.has(scheduleKey("habit", habit.id)),
+    })),
+  ].sort((first, second) => {
+    if (!first.startsAt) return 1;
+    if (!second.startsAt) return -1;
+    return new Date(first.startsAt).getTime() - new Date(second.startsAt).getTime();
+  });
+  const wins = tasks.filter((task) => task.completed);
+  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(new Date(`${sheetDate}T12:00:00`));
+
   return (
     <div>
-      <div className="page-heading">
-        <p className="eyebrow mb-2">{new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric" }).format(new Date(`${sheetDate}T12:00:00`))}</p>
-        <h1 className="page-title"><Icon name="today" className="heading-icon" />Your Daily Sheet</h1>
-        <p className="page-subtitle">A gentle plan for the day you're living.</p>
+      <div className="page-heading" data-tour="daily-sheet">
+        <h1 className="page-title"><Icon name="today" className="heading-icon" />Your Daily Sheet — {weekday}</h1>
       </div>
       {error && <Alert variant="danger">{error}</Alert>}
       {saved && <Alert variant="success">Your Daily Sheet is saved.</Alert>}
       {sheet?.is_edited_later && <Alert variant="info">This page was edited after its day.</Alert>}
       <Form onSubmit={save}>
-        <div className="planner-grid">
-          <div className="planner-span-8">
-            <Card className="surface-card accent-green h-100"><Card.Body>
-              <p className="eyebrow">Today’s focus</p>
-              <Form.Group>
-                <Form.Label className="fw-semibold">What would make today feel meaningful?</Form.Label>
-                <Form.Control as="textarea" rows={3} placeholder={"One intention per line"} value={highlightsText} onChange={(e) => { setHighlightsText(e.target.value); setShowHighlights(true); }} />
-              </Form.Group>
-              <p className="small text-secondary mt-2 mb-0">Keep it kind and achievable. Your first intention appears on Home.</p>
-            </Card.Body></Card>
-          </div>
-          <div className="planner-span-4">
-            <Card className="surface-card accent-rose h-100"><Card.Body>
-              <p className="eyebrow"><Icon name="mood" className="button-icon" />A moment for you</p>
-              <p className="mb-3">How are you feeling this {moodPeriod}?</p>
-              <div className="mood-options" role="group" aria-label="Choose your mood">
-                {[["great", "😀"], ["good", "🙂"], ["okay", "😐"], ["low", "😔"]].map(([value, emoji]) => (
-                  <button className={`mood-option${selectedMood === value ? " selected" : ""}`} type="button" key={value} aria-label={value} aria-pressed={selectedMood === value} onClick={() => setSelectedMood(value)}>{emoji}</button>
-                ))}
-              </div>
-              <div>
-                <Form.Control className="mt-3" aria-label="Optional mood note" placeholder="Add a note, if you'd like…" maxLength={2000} value={moodNote} onChange={(e) => setMoodNote(e.target.value)} />
-                <div className="d-flex align-items-center justify-content-between mt-3">
-                  <Button type="button" size="sm" variant="outline-primary" onClick={() => void saveMood()}>Save check-in</Button>
-                  {moodSaved && <span className="small text-success">Saved with care</span>}
-                </div>
-              </div>
-            </Card.Body></Card>
-          </div>
-          <div className="planner-span-6">
+        <div className="planner-grid daily-sheet-grid">
+          <div className="planner-span-12">
             <Card className="surface-card accent-teal"><Card.Body>
-              <p className="eyebrow">Your schedule</p>
-              {scheduleEvents.length || scheduledHabits.length ? (
-                <div className="d-grid gap-2">
-                  {[...scheduleEvents.map((event) => ({ id: event.id, title: event.title, time: event.starts_at, type: "event" })), ...scheduledHabits.map((habit) => ({ id: habit.id, title: habit.title, time: habit.preferred_start_time ?? "", type: "habit" }))]
-                    .sort((a, b) => a.time.localeCompare(b.time))
-                    .map((item) => <div className="d-flex align-items-center gap-3 soft-panel py-2" key={`${item.type}-${item.id}`}><span className="small text-success fw-semibold">{item.time.includes("T") ? new Date(item.time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : item.time.slice(0, 5) || "Anytime"}</span><span>{item.title}</span></div>)}
+              <p className="eyebrow"><Icon name="calendar" className="button-icon" />Your schedule</p>
+              {schedule.length ? (
+                <div className="daily-timeline-scroll" tabIndex={0} role="group" aria-label="Daily schedule timeline">
+                  <div className="daily-timeline">
+                    {schedule.map((item) => (
+                      <div className={`daily-timeline-item${item.completed ? " completed" : ""}`} key={item.id}>
+                        <span className="daily-timeline-time">
+                          {item.startsAt ? formatTime(item.startsAt) : "Anytime"}
+                          {item.endsAt ? ` – ${formatTime(item.endsAt)}` : ""}
+                        </span>
+                        <div className="daily-timeline-details">
+                          <span className="daily-timeline-title">{item.title}</span>
+                          <Form.Check
+                            type="checkbox"
+                            className="daily-timeline-check"
+                            label={item.completed ? "Completed" : "Mark complete"}
+                            checked={item.completed}
+                            disabled={!scheduleStateLoaded || savingScheduleItem !== null}
+                            onChange={(event) => void setScheduleItemCompleted(item, event.target.checked)}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : <p className="text-secondary mb-0">An open day is a lovely place to begin.</p>}
             </Card.Body></Card>
           </div>
-          <div className="planner-span-6">
-            <Card className="surface-card accent-purple"><Card.Body>
-              <p className="eyebrow">Notes to self</p>
-              <Form.Control as="textarea" rows={6} placeholder="Capture a thought, a reminder, or anything on your mind…" value={notes} onChange={(e) => { setNotes(e.target.value); setShowNotes(true); }} />
+          <div className="planner-span-12">
+            <Card className="surface-card accent-green"><Card.Body>
+              <p className="eyebrow"><Icon name="today" className="button-icon" />Things to do</p>
+              <div className="daily-entry-list daily-task-list">
+                {tasks.map((task, index) => (
+                  <div className={`daily-entry${task.completed ? " completed" : ""}`} key={`${index}-${task.title}`}>
+                    <Form.Check
+                      id={`daily-task-${index}`}
+                      type="checkbox"
+                      label={task.title}
+                      checked={task.completed}
+                      onChange={(event) => setTasks((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, completed: event.target.checked } : entry))}
+                    />
+                    <Button type="button" size="sm" variant="outline-secondary" aria-label={`Remove task: ${task.title}`} onClick={() => setTasks((current) => current.filter((_, entryIndex) => entryIndex !== index))}>×</Button>
+                  </div>
+                ))}
+              </div>
+              <div className="daily-entry-form daily-task-form">
+                <Form.Control aria-label="Add something to do" placeholder="Add something to do…" maxLength={200} value={taskInput} onChange={(event) => setTaskInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addTask(); } }} />
+                <Button type="button" variant="outline-primary" onClick={addTask} disabled={!taskInput.trim()}>Add</Button>
+              </div>
+              {!tasks.length && <p className="small text-secondary mt-2 mb-0">Choose a few kind, doable steps.</p>}
             </Card.Body></Card>
           </div>
           <div className="planner-span-12">
-            <Card className="surface-card"><Card.Body>
-              <div className="d-flex flex-wrap align-items-center justify-content-between gap-3">
-                <div>
-                  <p className="eyebrow mb-1">Little wins</p>
-                  <p className="small text-secondary mb-2">Add a win or a small next step on each line.</p>
-                  <Form.Control className="wins-input" as="textarea" rows={2} placeholder="One thought per line" value={tasksText} onChange={(e) => { setTasksText(e.target.value); setShowTasks(true); }} />
-                </div>
-                <Button type="submit" className="px-4">Save today's page</Button>
+            <Card className="surface-card accent-purple"><Card.Body>
+              <p className="eyebrow"><Icon name="journal" className="button-icon" />Notes to self</p>
+              <div className="daily-entry-list">
+                {notes.map((note, index) => (
+                  <div className="daily-entry" key={`${index}-${note}`}>
+                    <span>{note}</span>
+                    <Button type="button" size="sm" variant="outline-secondary" aria-label={`Remove note: ${note}`} onClick={() => setNotes((current) => current.filter((_, entryIndex) => entryIndex !== index))}>×</Button>
+                  </div>
+                ))}
+              </div>
+              <div className="daily-entry-form">
+                <Form.Control aria-label="Add a note" placeholder="Add a thought or reminder…" maxLength={1000} value={noteInput} onChange={(event) => setNoteInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addNote(); } }} />
+                <Button type="button" variant="outline-primary" onClick={addNote} disabled={!noteInput.trim()}>Add</Button>
+              </div>
+              {!notes.length && <p className="small text-secondary mt-2 mb-0">Keep little thoughts here, one at a time.</p>}
+            </Card.Body></Card>
+          </div>
+          {(["morning", "evening"] as const).map((period) => {
+            const existingMood = moods.find((entry) => entry.entry_date === sheetDate && entry.period === period);
+            const label = period === "morning" ? "Beginning-of-day" : "End-of-day";
+            return (
+              <div className="planner-span-6" key={period}>
+                <Card className="surface-card accent-rose h-100"><Card.Body>
+                  <div className="d-flex align-items-center justify-content-between gap-3 mb-3">
+                    <p className="eyebrow mb-0"><Icon name="mood" className="button-icon" />{label} mood</p>
+                    {existingMood && !moodEditing[period] && (
+                      <Button type="button" size="sm" variant="outline-primary" onClick={() => setMoodEditing((current) => ({ ...current, [period]: true }))}>Edit</Button>
+                    )}
+                  </div>
+                  {existingMood && !moodEditing[period] ? (
+                    <div className="daily-mood-summary" aria-live="polite">
+                      <span className="daily-mood-emoji" aria-hidden="true">
+                        {moodOptions.find(([value]) => value === existingMood.mood)?.[1] ?? "•"}
+                      </span>
+                      <div>
+                        <p className="text-capitalize fw-semibold mb-1">{existingMood.mood}</p>
+                        {existingMood.note && <p className="text-secondary mb-0">{existingMood.note}</p>}
+                      </div>
+                    </div>
+                  ) : moodEditing[period] ? (
+                    <>
+                      <p className="mb-3">How are you feeling this {period}?</p>
+                      <div className="mood-options" role="group" aria-label={`Choose your ${period} mood`}>
+                        {moodOptions.map(([value, emoji]) => (
+                          <button
+                            className={`mood-option${moodDrafts[period].mood === value ? " selected" : ""}`}
+                            type="button"
+                            key={value}
+                            aria-label={value}
+                            aria-pressed={moodDrafts[period].mood === value}
+                            onClick={() => setMoodDrafts((current) => ({
+                              ...current,
+                              [period]: { ...current[period], mood: value },
+                            }))}
+                          >{emoji}</button>
+                        ))}
+                      </div>
+                      <div className="daily-mood-footer">
+                        <Form.Control
+                          className="mt-3"
+                          aria-label={`Optional ${period} mood note`}
+                          placeholder="Add a note, if you’d like…"
+                          maxLength={2000}
+                          value={moodDrafts[period].note}
+                          onChange={(event) => setMoodDrafts((current) => ({
+                            ...current,
+                            [period]: { ...current[period], note: event.target.value },
+                          }))}
+                        />
+                        <div className="d-flex align-items-center gap-2 mt-3">
+                          <Button type="button" size="sm" onClick={() => void saveMood(period)}>Save check-in</Button>
+                          <Button type="button" size="sm" variant="outline-secondary" onClick={() => cancelMoodEdit(period)}>Cancel</Button>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="daily-mood-empty">
+                      <span className="text-secondary">Not checked in</span>
+                      <Button type="button" size="sm" variant="outline-primary" onClick={() => setMoodEditing((current) => ({ ...current, [period]: true }))}>
+                        Add check-in
+                      </Button>
+                    </div>
+                  )}
+                </Card.Body></Card>
+              </div>
+            );
+          })}
+          <div className="planner-span-12">
+            <Card className="surface-card accent-amber"><Card.Body>
+              <div className="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+                <p className="eyebrow mb-0"><Icon name="sparkles" className="button-icon" />Daily Wins &amp; Highlights</p>
+              </div>
+              <div className="daily-wins-highlights">
+                <section>
+                  <h2 className="h6 mb-3">Completed tasks</h2>
+                  {wins.length ? (
+                    <ul className="daily-wins-list mb-0">
+                      {wins.map((task, index) => <li key={`${index}-${task.title}`}>{task.title}</li>)}
+                    </ul>
+                  ) : <p className="small text-secondary mb-0">Completed tasks will appear here.</p>}
+                </section>
+                <section>
+                  <h2 className="h6 mb-3">Highlights</h2>
+                  <div className="daily-entry-list">
+                    {highlights.map((highlight, index) => (
+                      <div className="daily-entry" key={`${index}-${highlight}`}>
+                        <span>{highlight}</span>
+                        <Button type="button" size="sm" variant="outline-secondary" aria-label={`Remove highlight: ${highlight}`} onClick={() => setHighlights((current) => current.filter((_, entryIndex) => entryIndex !== index))}>×</Button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="daily-entry-form">
+                    <Form.Control aria-label="Add a highlight" placeholder="Add something you want to remember…" maxLength={1000} value={highlightInput} onChange={(event) => setHighlightInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addHighlight(); } }} />
+                    <Button type="button" variant="outline-primary" onClick={addHighlight} disabled={!highlightInput.trim()}>Add</Button>
+                  </div>
+                  {!highlights.length && <p className="small text-secondary mt-2 mb-0">Save moments you want to remember.</p>}
+                </section>
+              </div>
+              <div className="d-flex justify-content-end mt-4">
+                <Button type="submit" className="px-4">Save today’s page</Button>
               </div>
             </Card.Body></Card>
           </div>

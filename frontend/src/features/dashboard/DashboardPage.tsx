@@ -6,6 +6,7 @@ import { api } from "../../shared/api";
 import type { BacklogItem, CalendarEvent, DailySheet, MoodEntry } from "../../shared/types";
 import { Icon } from "../../shared/Icon";
 import { useTheme } from "../../app/ThemeContext";
+import { isDemoMode } from "../../demo/config";
 
 interface ChatMessage {
   id: string;
@@ -91,11 +92,12 @@ function todayDate() {
 
 function greeting() {
   const hour = new Date().getHours();
-  return hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  return hour < 12 ? "Good Morning" : hour < 18 ? "Good Afternoon" : "Good Evening";
 }
 
 export function DashboardPage() {
   const { theme } = useTheme();
+  const [displayName, setDisplayName] = useState("");
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [sheet, setSheet] = useState<DailySheet | null>(null);
   const [mood, setMood] = useState<MoodEntry | null>(null);
@@ -111,14 +113,16 @@ export function DashboardPage() {
 
   const refreshDashboard = useCallback(async () => {
     try {
-      const [calendarEvents, dailySheet, moods, backlog] = await Promise.all([
+      const [calendarEvents, dailySheet, moods, backlog, user] = await Promise.all([
         api<CalendarEvent[]>("/calendar/events"),
         api<DailySheet>(`/daily-sheets/by-date/${todayDate()}`).catch(() => null),
         api<MoodEntry[]>("/moods"),
         api<BacklogItem[]>("/backlog/items"),
+        api<{ display_name: string }>("/users/me"),
       ]);
       setEvents(calendarEvents.filter((event) => event.starts_at.slice(0, 10) >= todayDate()).slice(0, 4));
       setSheet(dailySheet);
+      setDisplayName(user.display_name);
       setMood(moods.find((entry) => entry.entry_date === todayDate()) ?? null);
       setBacklogItems(backlog.filter((item) => !item.is_completed).slice(0, 3));
       setError("");
@@ -234,45 +238,46 @@ export function DashboardPage() {
   }
 
   function proposalSummary(proposal: ChatProposal) {
-    if (proposal.action === "create_backlog_item") return `Backlog item · ${proposal.title}`;
+    if (proposal.action === "create_backlog_item") return `For later · ${proposal.title}`;
     if (proposal.action === "schedule_backlog_item") {
       return `Schedule ${proposal.title} · ${new Date(proposal.starts_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
     }
     return `${proposal.title} · ${new Date(proposal.starts_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
   }
 
-  const date = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric" }).format(new Date());
   const focus = sheet?.highlights?.[0] ?? sheet?.tasks?.find((task) => !task.completed)?.title;
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .35 }}>
-      <div className="page-heading">
-        <p className="eyebrow mb-2">{date}</p>
-        <h1 className="page-title"><Icon name="home" className="heading-icon" />{greeting()}, let's make today yours.</h1>
-        <p className="page-subtitle">A little space to decide what matters most.</p>
+      <div className="page-heading" data-tour="dashboard">
+        <h1 className="page-title"><Icon name="home" className="heading-icon" />{greeting()}{displayName ? `, ${displayName}` : ""} 🌱</h1>
       </div>
       {error && <Alert variant="danger">{error}</Alert>}
       <div className="planner-grid">
-        <motion.div className="planner-span-8" whileHover={{ y: -2 }} transition={{ duration: .18 }}>
+        <motion.div className="planner-span-12" whileHover={{ y: -2 }} transition={{ duration: .18 }}>
           <Card className="surface-card accent-green">
             <Card.Body>
-              <div className="d-flex align-items-center justify-content-between gap-3 mb-3">
-                <p className="eyebrow mb-0">Today's focus</p>
-                <Icon name="today" className="nav-icon text-success" />
+              <div className="home-focus-layout">
+                <section>
+                  <div className="d-flex align-items-center justify-content-between gap-3 mb-3">
+                    <p className="eyebrow mb-0">Your Daily Sheet</p>
+                    <Icon name="today" className="nav-icon text-success" />
+                  </div>
+                  <h2 className="h3 mb-2">{focus ?? "What would make today feel meaningful?"}</h2>
+                  <p className="text-secondary mb-4">{sheet?.notes || "Take a moment to choose what matters today."}</p>
+                  <Link className="btn btn-primary" to="/daily-sheet">Open your Daily Sheet</Link>
+                </section>
+                <section className="home-mood">
+                  <p className="eyebrow"><Icon name="mood" className="button-icon" />How are you feeling today?</p>
+                  {mood ? (
+                    <>
+                      <div className="display-5 mb-2">{({ great: "😀", good: "🙂", okay: "😐", low: "😔" } as Record<string, string>)[mood.mood] ?? "🙂"}</div>
+                      <p className="mb-3 text-secondary text-capitalize">{mood.mood}{mood.note ? ` · ${mood.note}` : ""}</p>
+                    </>
+                  ) : <p className="mb-3 text-secondary">Take a moment to check in with yourself.</p>}
+                  <Link to="/daily-sheet">Check in with yourself →</Link>
+                </section>
               </div>
-              <h2 className="h3 mb-2">{focus ?? "Choose one meaningful thing to move forward."}</h2>
-              <p className="text-secondary mb-4">{sheet?.notes || "You don't have to do it all. Start with what feels important."}</p>
-              <Link className="btn btn-primary" to="/daily-sheet">Open your Daily Sheet</Link>
-            </Card.Body>
-          </Card>
-        </motion.div>
-        <motion.div className="planner-span-4" whileHover={{ y: -2 }} transition={{ duration: .18 }}>
-          <Card className="surface-card accent-amber">
-            <Card.Body>
-              <p className="eyebrow mb-3">A rhythm of your own</p>
-              <div className="display-6 mb-2">🌱</div>
-              <p className="mb-3">Small, kind promises to yourself add up.</p>
-              <Link to="/habits">Visit your habits →</Link>
             </Card.Body>
           </Card>
         </motion.div>
@@ -280,58 +285,44 @@ export function DashboardPage() {
           <Card className="surface-card accent-teal">
             <Card.Body>
               <div className="d-flex align-items-center justify-content-between mb-3">
-                <p className="eyebrow mb-0"><Icon name="calendar" className="button-icon" />Coming up</p><Link to="/calendar">Open calendar →</Link>
+                <p className="eyebrow mb-0"><Icon name="calendar" className="button-icon" />Coming up</p><Link to="/calendar">Take a look at your calendar →</Link>
               </div>
               {events.length ? events.map((event) => (
                 <div className="d-flex justify-content-between gap-3 border-bottom py-2" key={event.id}>
                   <span className="fw-semibold">{event.title}</span>
                   <span className="text-secondary text-nowrap small">{new Date(event.starts_at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}</span>
                 </div>
-              )) : <p className="text-secondary mb-0">Nothing on the calendar yet. Leave a little breathing room.</p>}
+              )) : <p className="text-secondary mb-0">Nothing coming up yet. Leave a little breathing room.</p>}
             </Card.Body>
           </Card>
         </div>
         <div className="planner-span-6">
-          <Card className="surface-card accent-rose dashboard-small-card">
+          <Card className="surface-card accent-amber">
             <Card.Body>
-              <p className="eyebrow"><Icon name="mood" className="button-icon" />How are you feeling?</p>
-              {mood ? <><div className="h2 mb-1">{({ great: "😀", good: "🙂", okay: "😐", low: "😔" } as Record<string, string>)[mood.mood] ?? "🙂"}</div><p className="mb-0 text-secondary text-capitalize">{mood.mood} today</p></> : <p className="mb-0 text-secondary">Take a moment to check in with yourself.</p>}
-              <Link className="dashboard-card-action" to="/daily-sheet">Daily Sheet →</Link>
-            </Card.Body>
-          </Card>
-        </div>
-        <div className="planner-span-6">
-          <Card className="surface-card accent-purple dashboard-small-card">
-            <Card.Body>
-              <p className="eyebrow"><Icon name="journal" className="button-icon" />A moment to reflect</p>
-              <p>Notice how far you've come, one page at a time.</p>
-              <Link className="dashboard-card-action" to="/journal">Visit your journal →</Link>
-            </Card.Body>
-          </Card>
-        </div>
-        <div className="planner-span-6">
-          <Card className="surface-card accent-amber dashboard-small-card">
-            <Card.Body>
-              <p className="eyebrow"><Icon name="backlog" className="button-icon" />On your mind</p>
+              <div className="d-flex align-items-center justify-content-between gap-3 mb-3">
+                <p className="eyebrow mb-0">Do you have something to do in the near future?</p>
+                <Icon name="backlog" className="nav-icon text-success" />
+              </div>
               {backlogItems.length ? (
                 <ul className="dashboard-backlog-list">
                   {backlogItems.map((item) => <li key={item.id}>{item.title}</li>)}
                 </ul>
-              ) : <p className="mb-0 text-secondary">Your backlog is clear for now.</p>}
-              <Link className="dashboard-card-action" to="/backlog">Visit your backlog →</Link>
+              ) : <p className="mb-3 text-secondary">You don’t have to figure it all out now. Save a thought for later.</p>}
+              <Link className="d-inline-block mt-3" to="/backlog">See what’s on your mind →</Link>
             </Card.Body>
           </Card>
         </div>
         <div className="planner-span-12">
           <Card className="surface-card accent-green">
             <Card.Body>
-              <div className="d-flex align-items-center gap-2 mb-3">
+              <div className="d-flex align-items-center gap-2 mb-3" data-tour="assistant">
                 <Icon name="sparkles" className="header-icon" />
                 <div>
                   <h2 className="h5 mb-1">Your Personal OS assistant</h2>
                   <p className="small text-secondary mb-0">A friendly place to think something through.</p>
                 </div>
               </div>
+              {isDemoMode && <Alert variant="info" className="mb-3">The AI assistant is available in the full local application. Messages in this demo are not sent or saved.</Alert>}
               <div className="chat-messages" role="log" aria-live="polite" aria-label="Assistant conversation">
                 {historyLoading && <div className="chat-message-loading"><Spinner animation="border" size="sm" role="status" /><span>Loading your conversation…</span></div>}
                 {chatMessages.length === 0 && !historyLoading && <p className="text-secondary mb-0">Ask a question, sort out a thought, or get help finding a first step.</p>}
@@ -360,7 +351,7 @@ export function DashboardPage() {
                 {chatLoading && <div className="chat-message-loading"><Spinner animation="border" size="sm" role="status" /><span>Thinking…</span></div>}
                 <div ref={messagesEndRef} />
               </div>
-              {chatError && <Alert variant="danger" className="mt-3 mb-0">{chatError}</Alert>}
+              {chatError && <Alert variant="danger" className="chat-error mt-3 mb-0">{chatError}</Alert>}
               <Form onSubmit={sendMessage} className="chat-form">
                 <Form.Control
                   aria-label="Message your Personal OS assistant"
@@ -368,8 +359,9 @@ export function DashboardPage() {
                   maxLength={4000}
                   value={chatInput}
                   onChange={(event) => setChatInput(event.target.value)}
+                  disabled={isDemoMode}
                 />
-                <Button className="chat-send" type="submit" disabled={chatLoading || historyLoading || !chatInput.trim()} aria-label="Send message">
+                <Button className="chat-send" type="submit" disabled={isDemoMode || chatLoading || historyLoading || !chatInput.trim()} aria-label="Send message">
                   <Icon name="send" className="button-icon" />Send
                 </Button>
               </Form>

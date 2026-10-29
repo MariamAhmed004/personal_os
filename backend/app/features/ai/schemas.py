@@ -24,6 +24,8 @@ class ChatRequest(BaseModel):
 
 
 class CreateEventProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     action: Literal["create_event"]
     title: str = Field(min_length=1, max_length=200)
     event_type: Literal["interview", "workshop", "appointment", "graduation", "custom"] = "custom"
@@ -42,12 +44,16 @@ class CreateEventProposal(BaseModel):
 
 
 class CreateBacklogProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     action: Literal["create_backlog_item"]
     title: str = Field(min_length=1, max_length=200)
     description: str | None = None
 
 
 class ScheduleBacklogProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     action: Literal["schedule_backlog_item"]
     backlog_item_id: UUID
     title: str = Field(min_length=1, max_length=200)
@@ -70,8 +76,10 @@ ActionProposal = Annotated[
 
 
 class ChatCompletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     response: str = Field(min_length=1, max_length=4000)
-    proposal: ActionProposal | None = None
+    proposal: ActionProposal | None
 
 
 class ChatMessageRead(BaseModel):
